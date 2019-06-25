@@ -1,0 +1,169 @@
+# Script created on 17-May-2018
+#Loading the required libraries
+library(digest)
+library(cluster)
+library(ClusterR)
+library(NbClust)
+library(factoextra)
+library(dplyr)
+
+# Setting the working directory, path and loading the dataset
+setwd('D:\\Data_Modernization(ML)\\Data_Anomaly_approach\\Linear_regression_outliers')
+
+# Loading the dataset and assigning it to a variable
+df_dataset <- read.csv('Concrete_Data.csv')
+#df_numeric <- read.csv('Concrete_Data.csv')
+
+#Checking the datatypes
+df_datatype= grep("factor|level",capture.output(str(df_dataset)),ignore.case=TRUE,value=TRUE)
+#df_numericdatatype = grep("factor|level",capture.output(str(df_numeric)),ignore.case=TRUE,value=TRUE)
+
+#using the respective algorithms
+if(length(df_datatype)!=0){
+  #Dataset preprocessing
+  #Removing the duplicates columns
+  df_processed = df_dataset[!duplicated(lapply(df_dataset, digest))]
+  
+  #Removing the Null characters and the non-characters columns
+  dropping_columns <- c("POLICY_TRM_WRTN_PREM_AMT", "POLICY_DISCOUNT_AMT","GRID_IND","Row_ID")
+  df_processed = df_processed[ , !(names(df_processed) %in% dropping_columns),drop = TRUE]
+  
+  #Converting the datatypes
+  df_processed$RECORD_ID = as.factor(df_processed $RECORD_ID)
+  df_processed$COMPANY_CD = as.factor(df_processed $COMPANY_CD)
+  df_processed$ADMIN_BRANCH_CD = as.factor(df_processed $ADMIN_BRANCH_CD)
+  df_processed$CHANGE_EFFECTIVE_DT = as.factor(df_processed $CHANGE_EFFECTIVE_DT)
+  df_processed$ENTRY_DT = as.factor(df_processed $ENTRY_DT)
+  df_processed$SRC_TRANSACTION_SEQ_NBR = as.factor(df_processed $SRC_TRANSACTION_SEQ_NBR)
+  df_processed$POLICY_EXPIRY_DT = as.factor(df_processed $POLICY_EXPIRY_DT)
+  df_processed$TRANS_NBR = as.factor(df_processed $TRANS_NBR)
+  df_processed$RISK_SEQ_NBR = as.factor(df_processed $RISK_SEQ_NBR)
+  df_processed$SRC_ACCOUNTING_MONTH = as.factor(df_processed $SRC_ACCOUNTING_MONTH)
+  df_processed$SRC_ACCOUNTING_YEAR = as.factor(df_processed $SRC_ACCOUNTING_YEAR)
+  df_processed$WOC_TREATY_NBR = as.factor(df_processed $WOC_TREATY_NBR)
+  df_processed$TRANS_RATING_DT = as.factor(df_processed $TRANS_RATING_DT)
+  df_processed$RATING_ORIGINAL_DT = as.factor(df_processed $RATING_ORIGINAL_DT)
+  
+  
+  #Computing the distance matrix
+  gower_distance <- daisy(df_processed , metric = "gower")
+  gower_matrix <- as.matrix(gower_distance)
+  
+  # computing the optimal Cluster numbers
+  #Finding the optimal cluster no
+  sil_width <- c(NA)
+  for(i in 2:10){  
+    pam_fit <- pam(gower_distance, diss = TRUE, k = i)  
+    sil_width[i] <- pam_fit$silinfo$avg.width 
+    
+  }
+#Plotting the optimal cluster
+  plot(1:10, sil_width,
+       xlab = "Number of clusters",
+       ylab = "Silhouette Width")
+  lines(1:10, sil_width)
+  
+  K_no = which(sil_width == max(sil_width,na.rm=TRUE))
+  
+  #Modeling the dataset
+  cluster_fit = Cluster_Medoids(gower_matrix, clusters = K_no, distance_metric = 'jaccard_coefficient', swap_phase = TRUE)
+  
+  # Outliers shown by Graphical representation
+  plot_data = cluster_fit$silhouette_matrix
+  res_data = c(plot_data$intra_clust_dissim)
+  Cluster_No = cluster_fit$clusters
+  Dissimilarity_Value = res_data
+  
+  mapped_dataframe <- cbind(df_processed,Cluster_No,Dissimilarity_Value)
+  
+  boxplot(res_data, col="orange",border="brown", main = "Boxplot for outliers",outline = TRUE,notch = FALSE,
+          ylab="Dissimilarity")
+  
+  
+  # Outliers by IQR Method
+  Upper_Fence <- quantile(Dissimilarity_Value,0.75) + (IQR( Dissimilarity_Value*1.5))
+  Lower_Fence <- quantile( Dissimilarity_Value,0.25) - (IQR(Dissimilarity_Value*1.5))
+  
+  #extracting the index of the outliers using which function
+  outliers_Rowid <- which( Dissimilarity_Value < Lower_Fence |  Dissimilarity_Value > Upper_Fence)
+  
+  #passing the index to the datafame and extracting the respective outliers records
+  outlier_Clusterdistance =  Dissimilarity_Value[outliers_Rowid]
+  outlier_records = cbind(outliers_Rowid,outlier_Clusterdistance) 
+  
+  #Creating the dataframe
+  Cluster_No_inter= mapped_dataframe$Cluster_No
+  mediods_No = c(cluster_fit$medoid_indices)
+  centroids = mediods_No[Cluster_No_inter]
+  mapped_dataframe = cbind(mapped_dataframe,'Centroids' = mediods_No[Cluster_No_inter])
+  
+  # Individaul Contribution of factors interms of percentage
+  a =c()
+  new_df = data.frame()
+  
+  for(j in 1:length(outliers_Rowid)){
+    set1 =(df_processed[outliers_Rowid[j],])
+    set2 = (df_processed[mapped_dataframe$Centroids[outliers_Rowid[j]],])
+    final_set = rbind(set1,set2)
+    #print(final_set)
+    for(i in 1:length(final_set)){
+      a[i] = sets::gset_similarity(set1[i],set2[i],"Jaccard")
+      #print(a)
+    }
+    new_df = rbind(new_df,a)
+  }
+
+  colnames(new_df) <- c(colnames(df_processed))
+   new_df[new_df==0.5]<-" "
+  new_df[new_df==0]<-"Y"
+  new_df = cbind(outliers_Rowid,new_df)
+  write.csv(new_df, file = "Outlier_mixeddatatype.csv")
+}else{
+  #Finding the optimal cluster no
+  cluster_no = fviz_nbclust(df_dataset, kmeans, method = "silhouette")+
+    labs(subtitle = "Silhouette method")
+  optim_cluster = cluster_no$data
+  K_no = optim_cluster  %>% filter(y == max(y)) %>% select(clusters)
+  
+  # Buliding the Model
+  cluster_fit<-kmeans(df_dataset,4,nstart = 25)
+  
+  # Outliers shown by Graphical representation
+  cluster_distance = sqrt(rowSums(df_dataset - fitted(cluster_fit))^2)
+  calculated_distance = (cluster_distance)^2
+  boxplot(cluster_distance,main = "Outliers",las = 1,col = c("orange","red"),border = "brown",horizontal = FALSE,
+          notch = FALSE)
+  
+  # Outliers by IQR Method
+  Upper_Fence <- quantile(cluster_distance,0.75) + (IQR(cluster_distance*1.5))
+  Lower_Fence <- quantile(cluster_distance,0.25) - (IQR(cluster_distance*1.5))
+  
+  #extracting the index of the outliers using which function
+  outliers_Rowid <- which(cluster_distance < Lower_Fence | cluster_distance > Upper_Fence)
+  
+  #passing the index to the datafame and extracting the respective outliers records
+  outlier_clusterdistance = cluster_distance[outliers_Rowid]
+  #outlier_Clusterdistance = (outlier_Clusterdistance)^2 
+  #Creating the dataframe
+  outlier_records = cbind(outliers_Rowid,outlier_clusterdistance)
+  
+  output_dataframe = data.frame()
+  # Individaul Contribution of factors interms of percentage
+  for(j in 1:length(outliers_Rowid)){
+    values =(((df_dataset[outliers_Rowid[j],])/(outlier_clusterdistance[j])^2)*100)
+    output_dataframe <- rbind(output_dataframe,values)
+  }
+  
+  # determing the most influential factors
+  nMat <- `dim<-`(names(output_dataframe)[t(apply(output_dataframe, 1,  
+                                                  order, decreasing=TRUE))], dim(output_dataframe))
+  vMat1 <- t(apply(output_dataframe, 1,  sort, decreasing=TRUE))
+  cbind(outliers_Rowid, data.frame(Map(cbind, as.data.frame(nMat,
+                                                            stringsAsFactors=FALSE), as.data.frame(vMat1))))
+  Contributing_Features = cbind(outliers_Rowid, data.frame(Map(cbind, as.data.frame(nMat,
+                                                                                    stringsAsFactors=FALSE), as.data.frame(vMat1))))
+  
+  Final_contributingOutput = cbind(outliers_Rowid,as.data.frame(nMat))
+  write.csv(Final_contributingOutput, file = "Outlier_numericdatatype.csv")
+  
+}
